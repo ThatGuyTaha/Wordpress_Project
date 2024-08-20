@@ -1,0 +1,98 @@
+version: '2'
+
+networks:
+  web_net:
+    name: web_net
+  db_net:
+    name: db_net
+
+volumes:
+  mysql-master-data:
+  mysql-slave-data:
+
+services:
+  wordpress:
+    image: wordpress:latest
+    container_name: wordpress
+    environment:
+      WORDPRESS_DB_HOST: haproxy
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+    depends_on:
+      - haproxy
+    networks:
+      - web_net
+
+  mysql-master:
+    image: 'bitnami/mysql:latest'
+    container_name: mysql-master
+    environment:
+      - MYSQL_REPLICATION_MODE=master
+      - MYSQL_REPLICATION_USER=repl_user
+      - MYSQL_REPLICATION_PASSWORD=repl_password
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+    volumes:
+      - mysql-master-data:/bitnami/mysql/data
+    networks:
+      - db_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      start_period: 5s
+      timeout: 20s
+      interval: 5s
+      retries: 10
+
+  mysql-slave:
+    image: 'bitnami/mysql:latest'
+    container_name: mysql-slave
+    environment:
+      - MYSQL_REPLICATION_MODE=slave
+      - MYSQL_REPLICATION_USER=repl_user
+      - MYSQL_REPLICATION_PASSWORD=repl_password
+      - MYSQL_MASTER_HOST=mysql-master
+      - MYSQL_MASTER_PORT_NUMBER=3306
+      - MYSQL_MASTER_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+    depends_on:
+      - mysql-master
+    volumes:
+      - mysql-slave-data:/bitnami/mysql/data
+    networks:
+      - db_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      start_period: 5s
+      timeout: 20s
+      interval: 5s
+      retries: 10
+
+  haproxy:
+    image: haproxy:latest
+    container_name: haproxy
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+    ports:
+      - "3306:3306"
+      - "9090:9090"  # Expose the stats page on port 9090
+    depends_on:
+      - mysql-master
+      - mysql-slave
+    networks:
+      - web_net
+      - db_net
+        #    command: sh -c "mkdir -p /run/haproxy && exec haproxy -f /usr/local/etc/haproxy/haproxy.cfg" 
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    volumes:
+      - ./nginx/conf.d/:/etc/nginx/conf.d/
+    ports:
+      - "80:80"
+    networks:
+      - web_net
+    depends_on:
+      - wordpress
+
